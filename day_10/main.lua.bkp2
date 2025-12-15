@@ -1,0 +1,429 @@
+local bit = require("bit")
+local MAX_BUTTONS = 13
+local MAX_DEPTH = 1000
+
+local function lights_str_to_int(str)
+    local result = 0
+    local as_bytes = { str:byte(1, #str) }
+    for i, b in ipairs(as_bytes) do
+        if b == string.byte("#") then
+            result = result + 2 ^ (i - 1)
+        end
+    end
+    return result
+end
+
+local function parse_input()
+    local result = {}
+    for line in io.lines() do
+        local lights = line:match("([.#]+)")
+        lights = lights_str_to_int(lights)
+
+        local buttons = {}
+        local raw_buttons = {}
+        for button in line:gmatch("%(([%d,]*)%)") do
+            local raw_digits = {}
+            local button_int = 0
+            for digit in button:gmatch("(%d+)") do
+                table.insert(raw_digits, tonumber(digit))
+                button_int = button_int + 2 ^ digit
+            end
+            table.insert(raw_buttons, raw_digits)
+            table.insert(buttons, button_int)
+        end
+
+        local joltages = {}
+        local joltages_str = line:match("{([%d,]*)}")
+        for digit in joltages_str:gmatch("(%d+)") do
+            table.insert(joltages, tonumber(digit))
+        end
+
+        -- print(lights, buttons[6], raw_buttons[1][2], joltages[2])
+        table.insert(result, {
+            lights = lights,
+            buttons = buttons,
+            buttons_raw = raw_buttons,
+            joltages = joltages
+        })
+    end
+    return result
+end
+
+local permutations = {}
+for s = 1, MAX_BUTTONS do
+    permutations[s] = {}
+    for i = 1, 2 ^ s - 1 do
+        local size = 0
+        local ii = i
+        while ii > 0 do
+            size = size + ii % 2
+            ii = bit.rshift(ii, 1)
+        end
+        if permutations[s][size] == nil then
+            permutations[s][size] = {}
+        end
+        table.insert(permutations[s][size], i)
+        -- print(i, s, size)
+    end
+end
+
+local function solve_1(lines)
+    local result = 0
+    for _, line in ipairs(lines) do
+        local found = false
+        for size = 1, #line.buttons do
+            if found then break end
+            for _, permutation in ipairs(permutations[#line.buttons][size]) do
+                local this_lights = 0
+                for i_button, button in ipairs(line.buttons) do
+                    local i = 2 ^ (i_button - 1)
+                    if bit.band(i, permutation) > 0 then
+                        this_lights = bit.bxor(this_lights, button)
+                    end
+                end
+                if this_lights == line.lights then
+                    result = result + size
+                    found = true
+                    break
+                end
+            end
+        end
+    end
+    return result
+end
+
+local function eq(a, b)
+    if #a ~= #b then
+        return false
+    end
+    for i, va in pairs(a) do
+        if va ~= b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+
+local function solve_line_1(br, jolts, depth, cache)
+    -- print("try", unpack(jolts))
+    if math.min(unpack(jolts)) == 0 and math.max(unpack(jolts)) == 0 then
+        -- print("found", unpack(jolts))
+        cache.verymax_depth = depth
+        return 0
+    end
+    if math.min(unpack(jolts)) < 0 then
+        -- print("rejected", "depth:", depth)
+        -- print("rejected", unpack(jolts))
+        return false
+    end
+
+    local ref_jolts = { unpack(jolts) }
+    -- cache check
+    if cache.verymax_depth < depth then
+        io.write("d")
+        return false
+    end
+    for _, entry in ipairs(cache.solved) do
+        if eq(entry.jolts, ref_jolts) then
+            io.write("H")
+            return entry.steps
+        end
+    end
+    local partial_found = false
+    for _, entry in ipairs(cache.partial) do
+        if eq(entry.jolts, ref_jolts) then
+            partial_found = true
+            if entry.depth <= depth then
+                -- io.write("p")
+                return false
+            end
+            entry.depth = depth
+            break
+        end
+    end
+    if not partial_found then
+        -- print("to partials", "depth:", depth)
+        -- print("to partials", unpack(jolts))
+        table.insert(cache.partial, { jolts = ref_jolts, depth = depth })
+    end
+
+
+    local candidates = {}
+    for _, button in ipairs(br) do
+        local new_jolts = { unpack(ref_jolts) }
+        -- print(unpack(jolts))
+        for _, digit in ipairs(button) do
+            new_jolts[digit + 1] = new_jolts[digit + 1] - 1
+        end
+        local candidate = solve_line_1(br, new_jolts, depth + 1, cache)
+        if candidate then
+            table.insert(candidates, candidate)
+        end
+    end
+    if #candidates == 0 then
+        return false
+    end
+    -- print(unpack(candidates))
+    local best_candidate = math.min(unpack(candidates))
+    table.insert(cache.solved, { jolts = ref_jolts, steps = best_candidate + 1 })
+    return best_candidate + 1
+end
+
+local function solve_line_2(buttons, joltages)
+    local initial_clicks = {}
+    for i = 1, #buttons do
+        initial_clicks[i] = 0
+    end
+    -- local to_try = {{clicks = initial_clicks, joltages={unpack(joltages)}}}
+    local to_try = { initial_clicks }
+    local clicks_tried = {}
+    local best = math.huge
+
+    while #to_try > 0 do
+        local try = table.remove(to_try)
+        table.insert(clicks_tried, try)
+        -- print(unpack(try))
+        local sol = {}
+        local sol_size = 0
+        local continue = true
+        for i_button, button in ipairs(buttons) do
+            for _, digit in ipairs(button) do
+                digit = digit + 1
+                sol[digit] = (sol[digit] or 0) + try[i_button]
+                if sol[digit] > joltages[digit] or sol_size > best then
+                    continue = false
+                    break
+                end
+            end
+            sol_size = sol_size + try[i_button]
+            if not continue then break end
+        end
+        if continue then
+            if eq(sol, joltages) then
+                if best > sol_size then
+                    print("new best: " .. sol_size)
+                    print(unpack(try))
+                    best = sol_size
+                end
+            else
+                if best > sol_size then
+                    for i, t in ipairs(try) do
+                        local new_try = { unpack(try) }
+                        new_try[i] = t + 1
+                        -- print(unpack(new_try))
+                        local dup = false
+                        for _, tried in ipairs(clicks_tried) do
+                            if eq(tried, new_try) then
+                                dup = true
+                                break
+                            end
+                        end
+                        if not dup then
+                            table.insert(to_try, new_try)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+------------------------
+------------------------
+-- maximum amout of time a button can be pressed before exceeding joltages
+local function button_max(button, joltages)
+    local max = math.huge
+    for i = 1, #button do
+        if joltages[button[i] + 1] < max then
+            max = joltages[i]
+        end
+    end
+    assert(max < math.huge)
+    return max
+end
+
+local Node = {}
+function Node:new(buttons, button_i, joltages, depth, joltages_db)
+    local o = {
+        min = 0,
+        max = button_max(buttons[button_i], joltages),
+        button_i = button_i,
+        buttons = buttons,
+        joltages = joltages,
+        depth = depth,
+        is_leaf = #buttons == button_i,
+        joltages_db = joltages_db,
+        retired = false,
+    }
+    self.__index = self
+    setmetatable(o, self)
+    return o
+end
+
+function Node:print()
+    local r = ""
+    if self.redired then
+        r = "  (retired)"
+    end
+    print("node: i=" .. self.button_i ..
+        "  d=" .. self.depth ..
+        "  min/max=" .. self.min .. "/" .. self.max ..
+        "  j=" .. table.concat(self.joltages, " ") ..
+        r
+    )
+end
+
+function Node:get_leaf(verbosity)
+    if verbosity > 0 then
+        self:print()
+    end
+    if self.retired then
+        return nil
+    end
+    if self.is_leaf and not self.retired then
+        return self
+    end
+    while self.min <= self.max do
+        local leaf
+        if not self[self.min] then
+            self[self.min] = self:create_child()
+        end
+        if self[self.min] and not self[self.min].retired then
+            leaf = self[self.min]:get_leaf(verbosity)
+            if leaf and not leaf.retired then
+                return leaf
+            end
+        end
+        self.min = self.min + 1
+    end
+    -- child creation failed -> retire node
+    self.retired = true
+    for i = 0, self.max do
+        self[i] = nil
+    end
+    return nil
+end
+
+-- returns true if this joltage has been found in the cache with a better depth
+local function check_cache(db, joltages, depth)
+    local to_check = db
+    for _, j in ipairs(joltages) do
+        -- print(j, to_check, to_check[j])
+        if not to_check[j] then
+            to_check[j] = {}
+        end
+        to_check = to_check[j]
+    end
+    -- print(to_check, #to_check)
+    if #to_check == 0 then
+        -- print("cache miss")
+        to_check[1] = depth
+        -- print(to_check, #to_check)
+        return false
+    end
+    if to_check[1] >= depth then
+        -- print("cache updated")
+        to_check[1] = depth
+        return false
+    end
+    -- print("cache hit")
+    -- print(depth, to_check[1])
+    -- print(unpack(joltages))
+    return true
+end
+
+function Node:create_child()
+    assert(self.button_i < #self.buttons, "cannot create child on non-leaf node")
+    local new_joltages = { unpack(self.joltages) }
+    for _, b in ipairs(self.buttons[self.button_i]) do
+        new_joltages[b + 1] = new_joltages[b + 1] - self.min
+        if new_joltages[b + 1] < 0 then
+            return nil
+        end
+    end
+
+
+    -- print(unpack(self.buttons[2]))
+    local new_node = Node:new(
+        self.buttons,
+        self.button_i + 1,
+        new_joltages,
+        self.depth + self.min,
+        self.joltages_db
+    )
+    -- print("create:")
+    -- new_node:print()
+    if new_node.is_leaf and not new_node:verify() then
+        -- print("invlid leaf")
+        return nil
+    end
+
+    if check_cache(self.joltages_db, new_joltages, self.depth + self.min) then
+        return nil
+    end
+    -- print("create:")
+    -- new_node:print()
+    return new_node
+end
+
+function Node:verify()
+    assert(self.button_i == #self.buttons, "call Node:verify() only on leaf node")
+
+    local tmpj = { unpack(self.joltages) }
+    local maxj = math.max(unpack(self.joltages))
+
+    for _, b in ipairs(self.buttons[self.button_i]) do
+        if self.joltages[b + 1] ~= maxj then
+            return false
+        end
+        tmpj[b + 1] = 0
+    end
+    if math.max(unpack(tmpj)) > 0 then
+        return false
+    end
+    self.depth = self.depth + maxj
+    return true
+end
+
+local function solve_line_3(buttons, joltages)
+    local result = math.huge
+    local root = Node:new(buttons, 1, joltages, 0, {})
+    local node
+    repeat
+        node = root:get_leaf(0)
+        -- print("---")
+        if node then
+            -- node = root:get_leaf(1)
+            node:print()
+            if node.depth < result then
+                result = node.depth
+            end
+            node.retired = true
+        end
+    until node == nil
+    return result
+end
+
+
+local function solve_2(lines)
+    local result = 0
+    for _, line in ipairs(lines) do
+        -- local r = solve_line_1(line.buttons_raw, line.joltages, 0, {
+        --     solved = {},
+        --     partial = {},
+        --     verymax_depth = MAX_DEPTH
+        -- })
+        local r = solve_line_3(line.buttons_raw, line.joltages)
+        print(r)
+        result = result + r
+        -- break
+    end
+    return result
+end
+
+local lines = parse_input()
+print("result step 1:", string.format("%d", solve_1(lines)))
+print("result step 2:", string.format("%d", solve_2(lines)))

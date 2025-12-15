@@ -1,0 +1,313 @@
+local bit = require("bit")
+local MAX_BUTTONS = 13
+local MAX_DEPTH = 1000
+
+local function lights_str_to_int(str)
+    local result = 0
+    local as_bytes = { str:byte(1, #str) }
+    for i, b in ipairs(as_bytes) do
+        if b == string.byte("#") then
+            result = result + 2 ^ (i - 1)
+        end
+    end
+    return result
+end
+
+local function parse_input()
+    local result = {}
+    for line in io.lines() do
+        local lights = line:match("([.#]+)")
+        lights = lights_str_to_int(lights)
+
+        local buttons = {}
+        local raw_buttons = {}
+        for button in line:gmatch("%(([%d,]*)%)") do
+            local raw_digits = {}
+            local button_int = 0
+            for digit in button:gmatch("(%d+)") do
+                table.insert(raw_digits, tonumber(digit))
+                button_int = button_int + 2 ^ digit
+            end
+            table.insert(raw_buttons, raw_digits)
+            table.insert(buttons, button_int)
+        end
+
+        local joltages = {}
+        local joltages_str = line:match("{([%d,]*)}")
+        for digit in joltages_str:gmatch("(%d+)") do
+            table.insert(joltages, tonumber(digit))
+        end
+
+        -- print(lights, buttons[6], raw_buttons[1][2], joltages[2])
+        table.insert(result, {
+            lights = lights,
+            buttons = buttons,
+            buttons_raw = raw_buttons,
+            joltages = joltages
+        })
+    end
+    return result
+end
+
+local permutations = {}
+for s = 1, MAX_BUTTONS do
+    permutations[s] = {}
+    for i = 1, 2 ^ s - 1 do
+        local size = 0
+        local ii = i
+        while ii > 0 do
+            size = size + ii % 2
+            ii = bit.rshift(ii, 1)
+        end
+        if permutations[s][size] == nil then
+            permutations[s][size] = {}
+        end
+        table.insert(permutations[s][size], i)
+        -- print(i, s, size)
+    end
+end
+
+local function solve_1(lines)
+    local result = 0
+    for _, line in ipairs(lines) do
+        local found = false
+        for size = 1, #line.buttons do
+            if found then break end
+            for _, permutation in ipairs(permutations[#line.buttons][size]) do
+                local this_lights = 0
+                for i_button, button in ipairs(line.buttons) do
+                    local i = 2 ^ (i_button - 1)
+                    if bit.band(i, permutation) > 0 then
+                        this_lights = bit.bxor(this_lights, button)
+                    end
+                end
+                if this_lights == line.lights then
+                    result = result + size
+                    found = true
+                    break
+                end
+            end
+        end
+    end
+    return result
+end
+
+local function eq(a, b)
+    if #a ~= #b then
+        return false
+    end
+    for i, va in pairs(a) do
+        if va ~= b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+-- maximum amout of time a button can be pressed before exceeding joltages
+local function button_max(button, j_from, j_to, max)
+    max = max or math.huge
+    for i = 1, #button do
+        local j = j_to[button[i] + 1] - j_from[button[i] + 1]
+        if j < max then
+            max = j
+        end
+    end
+    return max
+end
+
+local function increase_joltages(joltages, button, n_clicks)
+    local j_new = { unpack(joltages) }
+    for i = 1, #button do
+        j_new[button[i] + 1] = joltages[button[i] + 1] + n_clicks
+    end
+    return j_new
+end
+
+local Range = {}
+function Range:new(o)
+    o = o or {}
+    self.__index = self
+    setmetatable(o, self)
+    return o
+end
+
+function Range:length()
+    return self.max - self.min + 1
+end
+
+function Range:as_str()
+    return string.format(
+        "range: [ %d-%d   b_i: %d   j: {%s}-{%s} ]",
+        self.min,
+        self.max,
+        self.button_i,
+        table.concat(self.j_min, " "),
+        table.concat(self.j_max, " ")
+    )
+end
+
+local function add_to_rbl(range, rbl)
+    -- local mt = { __mode = "v" }
+    local mt = {}
+    if not rbl[range:length()] then
+        rbl[range:length()] = setmetatable({}, mt)
+    end
+    table.insert(rbl[range:length()], range)
+end
+
+function Range:make_children()
+    if self.button_i == #self.state.buttons then
+        return nil
+    end
+    local max = button_max(
+        self.state.buttons[self.button_i + 1],
+        self.state.zeroes,
+        self.state.joltages
+    )
+    local child = Range:new {
+        min = 0,
+        max = max,
+        button_i = self.button_i + 1,
+        parent = self,
+        j_min = self.state.zeroes,
+        j_max = increase_joltages(self.state.zeroes, self.state.buttons[self.button_i + 1], max),
+        children = {},
+        state = self.state
+    }
+    add_to_rbl(child, self.state.rbl)
+
+    child:make_children()
+end
+
+function Range:split()
+    local mid = math.floor((self.min + self.max) / 2)
+    local parent_j_min
+    if not self.parent then
+        local zeroes = {}
+        for _, _ in pairs(self.j_min) do
+            table.insert(zeroes, 0)
+        end
+        parent_j_min = zeroes
+    else
+        parent_j_min = self.parent.j_min
+
+    end
+
+    local lower = Range:new {
+        min = self.min,
+        max = mid,
+        button_i = self.button_i,
+        parent = self.parent,
+        j_min = self.j_min,
+        j_max = increase_joltages(parent_j_min, self.state.buttons[self.button_i], mid),
+        children = {},
+        state = self.state
+    }
+    add_to_rbl(lower, self.state.rbl)
+
+    for _, c in pairs(self.children) do
+        c::shrink()
+    end
+
+    local upper = Range:new {
+        min = mid + 1,
+        max = self.max,
+        button_i = self.button_i,
+        parent = self.parent,
+        j_min = increase_joltages(lower.j_max, self.state.buttons[self.button_i], 1),
+        j_max = self.j_max,
+        children = {},
+        state = self.state
+    }
+    add_to_rbl(upper, self.state.rbl)
+
+    if self.parent then
+        table.insert(self.parent.children, lower)
+        table.insert(self.parent.children, upper)
+    end
+
+    for _, c in pairs(self.children) do
+        c = nil
+    end
+    self = nil
+    return lower, upper
+end
+
+local function longest_range(rbl)
+    local longest = 0
+    for l, ranges in pairs(rbl) do
+        if l > longest and #ranges > 0 then
+            longest = l
+        end
+    end
+    return longest
+end
+
+local function make_zeroes(joltages)
+    local zeroes = {}
+    for _, _ in pairs(joltages) do
+        table.insert(zeroes, 0)
+    end
+    return zeroes
+end
+
+local function solve_line_2(buttons, joltages)
+    local result = math.huge
+    local zeroes = make_zeroes(joltages)
+    local max = button_max(buttons[1], zeroes, joltages)
+    local rbl = {}
+    local state = { rbl = rbl, buttons = buttons, zeroes = zeroes, joltages = joltages }
+
+    local root = Range:new {
+        min = 0,
+        max = max,
+        button_i = 1,
+        parent = nil,
+        children = {},
+        j_min = zeroes,
+        j_max = increase_joltages(zeroes, buttons[1], max),
+        state = state
+    }
+    -- print(root:as_str())
+    add_to_rbl(root, rbl)
+    root:make_children()
+
+    local iter = 10
+    while iter > 0 do
+        iter = iter - 1
+        local longest = longest_range(rbl)
+        assert(longest > 0)
+        if longest == 1 then
+            break
+        end
+        local range = table.remove(rbl[longest])
+        print(range:as_str())
+
+        local r1, r2 = range:split()
+        print(r1:as_str())
+        print(r2:as_str())
+        print()
+    end
+
+    -- for _, r in longest_range[1] do
+    --     --| TODO |--
+    --     -- find all paths
+    -- end
+    return result
+end
+
+local function solve_2(lines)
+    local result = 0
+    for _, line in ipairs(lines) do
+        local r = solve_line_2(line.buttons_raw, line.joltages)
+        print(r)
+        result = result + r
+        break
+    end
+    return result
+end
+
+local lines = parse_input()
+print("result step 1:", string.format("%d", solve_1(lines)))
+print("result step 2:", string.format("%d", solve_2(lines)))

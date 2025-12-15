@@ -1,0 +1,112 @@
+local N_LINKS = 10
+local N_CIRCUITS = 3
+
+local result_step_1 = 1
+local result_step_2 = 0
+
+local boxes = {}
+for l in io.stdin:lines() do
+    table.insert(boxes, { l:match("(%d+),(%d+),(%d+)") })
+end
+-- print(boxes[1][1])
+-- print(boxes[2][2])
+
+
+-- local box_to_box_distance = {}
+local links = {}
+local links_seq = {}
+for i = 1, #boxes do
+    -- box_to_box_distance[i] = {}
+    for j = i + 1, #boxes do
+        local link = { i, j }
+        local distance =
+            (boxes[i][1] - boxes[j][1]) ^ 2 +
+            (boxes[i][2] - boxes[j][2]) ^ 2 +
+            (boxes[i][3] - boxes[j][3]) ^ 2
+        links[link] = distance
+        table.insert(links_seq, { i, j, distance })
+        -- box_to_box_distance[i][j] = distance
+    end
+end
+
+table.sort(links_seq, function(a, b) return a[3] < b[3] end)
+local top_links_seq = {}
+for i, l in ipairs(links_seq) do
+    -- print(l[1], l[2], l[3])
+    table.insert(top_links_seq, l)
+    if i >= N_LINKS then break end
+end
+
+local function set_pop(t)
+    for k, _ in pairs(t) do
+        t[k] = nil
+        return k
+    end
+    return nil
+end
+local function set_len(t)
+    local len = 0
+    for _, _ in pairs(t) do
+        len = len + 1
+    end
+    return len
+end
+local function set_print(t)
+    local text = ""
+    for k, _ in pairs(t) do
+        text = text .. " " .. k
+    end
+    print(text)
+end
+
+
+local function make_circuits(links_seq)
+    local circuits = {}
+    local last_link = links_seq[1]
+    while #links_seq > 0 do
+        local link                = table.remove(links_seq)
+
+        local circuit_set         = {}
+        circuit_set[link[1]]      = true
+        circuit_set[link[2]]      = true
+
+        local box_to_check_set    = {}
+        box_to_check_set[link[1]] = true
+        box_to_check_set[link[2]] = true
+
+        while true do
+            local box_to_check = set_pop(box_to_check_set)
+            if box_to_check == nil then break end
+            for i, l in pairs(links_seq) do
+                if l[1] == box_to_check or l[2] == box_to_check then
+                    table.remove(links_seq, i)
+                    if not circuit_set[l[1]] then
+                        box_to_check_set[l[1]] = true
+                    end
+                    if not circuit_set[l[2]] then
+                        box_to_check_set[l[2]] = true
+                    end
+                    circuit_set[l[1]] = true
+                    circuit_set[l[2]] = true
+                end
+                last_link = l
+            end
+        end
+        table.insert(circuits, circuit_set)
+    end
+    return circuits, last_link
+end
+
+-- step 1
+local circuits = make_circuits(top_links_seq)
+table.sort(circuits, function(a, b) return set_len(a) > set_len(b) end)
+for i = 1, N_CIRCUITS do
+    result_step_1 = result_step_1 * set_len(circuits[i])
+end
+print("result step 1:", string.format("%d", result_step_1))
+
+-- step 2
+local _, link = make_circuits(links_seq)
+print( boxes[link[1]][1] , boxes[link[2]][1])
+result_step_2 = boxes[link[1]][1] * boxes[link[2]][1]
+print("result step 2:", string.format("%d", result_step_2))
