@@ -1,6 +1,6 @@
 local bit = require("bit")
 local MAX_BUTTONS = 13
-local MAX_DEPTH = 1000
+local CANDIDATES_LIMIT = 0
 
 local function lights_str_to_int(str)
     local result = 0
@@ -175,6 +175,13 @@ end
 
 function Candidate:split()
     local bottom_clicks_max = { unpack(self.clicks_max) }
+    -- print(self:as_str())
+    if self.clicks_max[self.longest_i] == nil then
+        print("max", self:as_str())
+    end
+    if self.clicks_min[self.longest_i] == nil then
+        print("min", self:as_str())
+    end
     local mid = math.floor((self.clicks_max[self.longest_i] + self.clicks_min[self.longest_i]) / 2)
     -- print(mid, self.longest_i)
     bottom_clicks_max[self.longest_i] = mid
@@ -221,17 +228,50 @@ function Candidate:is_solution(joltages)
     return true
 end
 
-local function get_longest_candidate(candidates)
-    local longest_i = 1
-    local longest = 0
-    for i, c in pairs(candidates) do
-        if c.length > longest then
-            longest = c.length
-            longest_i = i
+local function candidates_push(candidates, c)
+    candidates.size = candidates.size + 1
+    if not candidates[c.length] then
+        candidates[c.length] = {}
+    end
+    table.insert(candidates[c.length], c)
+    if c.length > candidates.len then
+        candidates.len = c.length
+    end
+    -- print(c.length, candidates.len)
+end
+
+local function candidates_pop(candidates)
+    if candidates.len == -1 then
+        return nil
+    end
+    -- if candidates[0] and #candidates[0] > 1 then -- TODO: lazyness
+    --     candidates.size = candidates.size - 1
+    --     return table.remove(candidates[0])
+    -- end
+    if candidates.size > CANDIDATES_LIMIT then -- save some RAM!
+        for i = 0, candidates.len do
+            if candidates[i] and #candidates[i] > 0 then
+                candidates.size = candidates.size - 1
+                return table.remove(candidates[i])
+            end
         end
     end
-    return table.remove(candidates, longest_i)
+    candidates.size = candidates.size - 1
+    local c = table.remove(candidates[candidates.len])
+    local empty = true
+    for i = candidates.len, 0, -1 do
+        if #(candidates[i] or {}) > 0 then
+            candidates.len = i
+            empty = false
+            break
+        end
+    end
+    if empty then
+        candidates.len = -1
+    end
+    return c
 end
+
 
 local function solve_line_2(buttons, joltages)
     local clicks_max = {}
@@ -244,32 +284,49 @@ local function solve_line_2(buttons, joltages)
         buttons = buttons,
     }
 
-    local candidates = { root }
+    local candidates = { size = 0, len = -1 }
+    candidates_push(candidates, root)
     local solutions = {}
+    local min_result = math.huge
 
     local iter = 0
-    while #candidates > 0 do
-        -- iter = iter + 1
-        -- if iter > 10 then
-        --     break
-        -- end
+    while true do
+        iter = iter + 1
+        if iter % 1000000 == 0 then
+            --     break
+            print("size: " .. candidates.size .. "   len: " .. candidates.len)
+        end
         -- print(#candidates)
-        local candidate = get_longest_candidate(candidates)
-        if candidate:is_valid(joltages) then
-            if candidate:is_solution(joltages) then
-                print("solution: ", candidate:as_str())
-                table.insert(solutions, candidate)
+        local candidate = candidates_pop(candidates)
+        if candidate == nil then
+            break
+        end
+        local bottom, top = candidate:split()
+        -- print("c", candidate:as_str())
+        -- print("b", bottom:as_str())
+        -- print("t", top:as_str())
+        -- print()
+        if bottom:is_valid(joltages) then
+            if bottom:is_solution(joltages) then
+                print("solution: ", bottom:as_str())
+                table.insert(solutions, bottom)
+                min_result = math.min(bottom:get_total_clicks(), min_result)
             else
-                local bottom, top = candidate:split()
-                print("c", candidate:as_str())
-                print("b", bottom:as_str())
-                print("t", top:as_str())
-                print()
-                table.insert(candidates, bottom)
-                table.insert(candidates, top)
+                if bottom:get_total_clicks() < min_result then
+                    candidates_push(candidates, bottom)
+                end
             end
-            -- else
-            --     print("invalid: ", candidate:as_str())
+        end
+        if top:is_valid(joltages) then
+            if top:is_solution(joltages) then
+                print("solution: ", top:as_str())
+                table.insert(solutions, top)
+                min_result = math.min(top:get_total_clicks(), min_result)
+            else
+                if top:get_total_clicks() < min_result then
+                    candidates_push(candidates, top)
+                end
+            end
         end
     end
 
@@ -279,6 +336,7 @@ local function solve_line_2(buttons, joltages)
             result = s:get_total_clicks()
         end
     end
+    candidates = nil
     return result
 end
 
